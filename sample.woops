@@ -1,0 +1,3 @@
+JTS:area(geom=POLYGON((1 1, 1 2, 2 2, 2 1, 1 1)))
+# JTS:area(geom=@http://geoserver/wfs:topp:states)
+# JTS:area:result(geom=./states.gml)
