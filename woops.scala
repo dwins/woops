@@ -10,8 +10,12 @@ sealed trait Exp
 case class Literal(value: String) extends Exp
 case class LocalRef(path: String) extends Exp
 case class RemoteRef(url: String) extends Exp
+case class WFSRef(url: String, typename: String) extends Exp
 
 object woops extends App {
+  type InputData = Either[net.opengis.wps10.DataType, net.opengis.wps10.InputReferenceType]
+  val asEObject = (_: InputData).fold(identity, identity)
+
   implicit def rightBias[L, R](e: Either[L, R]): Either.RightProjection[L,R] = e.right
   
   val factory = new net.opengis.wps10.impl.Wps10FactoryImpl
@@ -64,32 +68,40 @@ object woops extends App {
     val webRef: Parser[RemoteRef] =
       for (url <- """@https?://[\p{Alpha}\p{Digit}.\/_?&=]+""".r) yield RemoteRef(url.tail)
 
+    val wfsRef: Parser[WFSRef] =
+      for {
+        url <- """@wfs\+https?://[\p{Alpha}\p{Digit}:.\/_?&=]+""".r
+        _ <- elem('#')
+        typename <- """[\p{Alpha}\p{Digit}:.\/_?&=]+""".r
+      } yield WFSRef(url drop ("@wfs+".size), typename)
+        
     val numeric: Parser[Literal] =
       for (digits <- """[\p{Digit}.]+""".r) yield Literal(digits)
 
-    val expression: Parser[Exp] = fileRef | webRef | numeric
+    val expression: Parser[Exp] = fileRef | webRef | wfsRef | numeric
   }
 
   val server = new ProcessingServer("http://localhost:8080/geoserver/wps")
 
   // TODO: This should be checking the expected data type for the parameter
-  def asData(e: Exp): Any =
+  def asData(e: Exp, input: ProcessInput): InputData =
     e match {
-      case Literal(value) => value
+      case Literal(value) => 
+        Left(WPSUtils.createInputDataType(value, input))
       case LocalRef(path) =>
         import org.geoscript.geometry.GML
-        val input = factory.createInputType
-        val data = factory.createDataType
-        val complex = factory.createComplexDataType
-        complex.getData.asInstanceOf[java.util.List[Any]]
-          .add(GML.decode(new java.io.File(path)))
-        data.setComplexData(complex)
-        input.setData(data)
-        input
+        val param = WPSUtils.createInputDataType(GML.decode(new java.io.File(path)), WPSUtils.INPUTTYPE_COMPLEXDATA, "application/wkt")
+        println(param)
+        Left(param)
       case RemoteRef(href) => 
-        val input = factory.createInputReferenceType
-        input.setHref(href)
-        input
+        val ref = factory.createInputReferenceType
+        ref.setHref(href)
+        Right(ref)
+      case WFSRef(href, typename) =>
+        val encode = java.net.URLEncoder.encode(_: String, "UTF-8")
+        val ref = factory.createInputReferenceType
+        ref.setHref(href + "?service=WFS&version=1.0.0&format=gml&typename=" + encode(typename))
+        Right(ref)
     }
 
 
@@ -135,15 +147,15 @@ object woops extends App {
     }
 
     def mkInput(d: ProcessDescriptor)(arg: Argument)
-    : Either[String, (String, net.opengis.wps10.DataType)] =
+    : Either[String, (String, InputData)] =
       d.inputs.find(_.name == arg.tag) match {
         case None => Left("Argument '%s' is not used by this process." format arg.tag)
         case Some(inputSpec) => 
-          Right(arg.tag, WPSUtils.createInputDataType(asData(arg.expression), inputSpec))
+          Right((arg.tag, asData(arg.expression, inputSpec)))
       }
 
     def mkInputs(d: ProcessDescriptor, args: Seq[Argument])
-    : Either[String, Seq[(String, net.opengis.wps10.DataType)]] =
+    : Either[String, Seq[(String, InputData)]] =
       sequence(args map mkInput(d))
 
     for {
@@ -153,7 +165,21 @@ object woops extends App {
     } yield {
       val request = server.specification.createExecuteProcessRequest(server.serviceUrl)
       request.setIdentifier(desc.pname.name)
-      inputs.foreach { case (name, data) => request.addInput(name, Seq(data)) }
+      inputs.foreach { case (name, data) => 
+        request.addInput(name, Seq(asEObject(data)))
+      }
+
+      if (desc.outputs.size == 1) {
+        val raw = server.service.createOutputDefinitionType(desc.outputs.head.name)
+        desc.outputs.head.`type` match {
+          case SimpleData(schema) => raw.setMimeType(schema)
+          case ComplexData(schema, _) => raw.setMimeType(schema)
+          case UnknownData => ()
+        }
+        request.setResponseForm(server.service.createResponseForm(null, raw))
+      }
+
+      // desc.outputs.foreach { request.addOutput } // println } 
       request 
     }
   }
