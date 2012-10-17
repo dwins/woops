@@ -78,7 +78,14 @@ object woops extends App {
     val numeric: Parser[Literal] =
       for (digits <- """[\p{Digit}.]+""".r) yield Literal(digits)
 
-    val expression: Parser[Exp] = fileRef | webRef | wfsRef | numeric
+    val stringLiteral: Parser[Literal] =
+      for {
+        _ <- elem('"')
+        text <- rep(elem("Unquoted Text", _ != '"'))
+        _ <- elem('"')
+      } yield Literal(text.mkString)
+
+    val expression: Parser[Exp] = fileRef | webRef | wfsRef | numeric | stringLiteral
   }
 
   val server = new ProcessingServer("http://localhost:8080/geoserver/wps")
