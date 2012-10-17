@@ -16,7 +16,8 @@ package object woops {
         // TODO: Parse the other supported formats
         ComplexData(p.getComplexData.getDefault.getFormat.getMimeType, Set.empty) 
       else
-        sys.error("ProcessInput: '%s' specifies neither Literal nor Complex data" format p)
+        UnknownData
+        // sys.error("ProcessInput: '%s' specifies neither Literal nor Complex data" format p.getIdentifier)
     def arity: Arity = 
       Arity(Some(conv(p.getMinOccurs)), Some(conv(p.getMaxOccurs)))
   }

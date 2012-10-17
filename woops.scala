@@ -89,8 +89,19 @@ object woops extends App {
       case Literal(value) => 
         Left(WPSUtils.createInputDataType(value, input))
       case LocalRef(path) =>
-        import org.geoscript.geometry.GML
-        val param = WPSUtils.createInputDataType(GML.decode(new java.io.File(path)), WPSUtils.INPUTTYPE_COMPLEXDATA, "application/wkt")
+        import org.geotools.xml.Parser, org.geotools.gml2.GMLConfiguration
+        val parser = new Parser(new GMLConfiguration)
+        val reader = new java.io.FileReader(new java.io.File(path))
+        val geom = 
+          try
+            parser.parse(reader)
+          finally
+            reader.close()
+
+        val param = WPSUtils.createInputDataType(
+          geom,
+          WPSUtils.INPUTTYPE_COMPLEXDATA,
+          "application/wkt")
         println(param)
         Left(param)
       case RemoteRef(href) => 
